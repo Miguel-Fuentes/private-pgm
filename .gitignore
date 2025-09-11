@@ -3,7 +3,8 @@ __pycache__
 .python-version
 .venv/
 build/
-*/.ipynb_checkpoints/*
+.ipynb_checkpoints/
+**/.ipynb_checkpoints
 pyproject.toml
 *.egg-info/
 *.ipynb
