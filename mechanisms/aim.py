@@ -15,7 +15,6 @@ from mbi import (
     estimation,
     junction_tree,
     LinearMeasurement,
-    LinearMeasurement,
 )
 from mechanism import Mechanism
 from collections import defaultdict

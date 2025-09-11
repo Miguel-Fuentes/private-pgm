@@ -28,7 +28,7 @@ refactoring. Contributions for improvement are welcome.
 """
 
 
-def entropic_mirror_descent(loss_and_grad, x0, total, iters=250):
+def entropic_mirror_descent(loss_and_grad, x0, total, iters=1_000):
     """Performs optimization using entropic mirror descent to find optimal weights."""
     logP = np.log(x0 + np.nextafter(0, 1)) + np.log(total) - np.log(x0.sum())
     P = np.exp(logP)
@@ -41,15 +41,12 @@ def entropic_mirror_descent(loss_and_grad, x0, total, iters=250):
         logQ = logP - alpha * dL
         logQ += np.log(total) - logsumexp(logQ)
         Q = np.exp(logQ)
-        # Q = P * np.exp(-alpha*dL)
-        # Q *= total / Q.sum()
         new_loss, new_dL = loss_and_grad(Q)
 
         if loss - new_loss >= 0.5 * alpha * dL.dot(P - Q):
             # print(alpha, loss)
             logP = logQ
             loss, dL = new_loss, new_dL
-            # increase step size if we haven't already decreased it at least once
             if not begun:
                 alpha *= 2
         else:
@@ -88,7 +85,7 @@ def public_support(
         loss, dL = loss_and_grad_mu(mu)
         dweights = np.zeros(weights.size)
         for cl in dL.cliques:
-            idx = est.project(cl).df.values
+            idx = est.df[list(cl)].values
             dweights += np.array(dL[cl].values[tuple(idx.T)])
         return loss, dweights
 

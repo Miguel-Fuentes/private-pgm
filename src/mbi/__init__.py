@@ -7,7 +7,7 @@ and various estimation and oracle modules.
 """
 from . import callbacks, estimation, junction_tree, marginal_oracles
 from .clique_vector import CliqueVector
-from .dataset import Dataset
+from .dataset import Dataset, JaxDataset
 from .domain import Domain
 from .estimation import Estimator
 from .factor import Factor, Projectable
@@ -20,6 +20,7 @@ Clique = tuple[str, ...]
 __all__ = [
     'Domain',
     'Dataset',
+    'JaxDataset',
     'Factor',
     'Clique',
     'CliqueVector',

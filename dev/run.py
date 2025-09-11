@@ -1,0 +1,112 @@
+import argparse
+import time
+import csv
+
+from mbi import Dataset
+import ent_md
+from scoring import mutual_information
+import graph
+import sampling
+from itertools import combinations
+import jax
+import jax.numpy as jnp
+
+
+def main(size_multiplier: float, max_iters: int):
+    # Load data and domain
+    data = Dataset.load("../data/adult.csv", "../data/adult-domain.json")
+    domain = data.domain
+    total = data.df.shape[0]
+
+    # Calculate mutual information scores for attribute pairs
+    scores = {}
+    margs = {}
+    for comb in combinations(domain.attributes, 2):
+        marg = data.project(comb)
+        margs[comb] = marg
+        scores[comb] = mutual_information(marg)
+
+    # Number of samples for synthetic dataset
+    n = int(total * size_multiplier)
+
+    options = list(scores.keys())
+    scores_array = jnp.array(list(scores.values()))
+
+    # Start timing here - beginning of the actual synthesis process
+    start_time = time.time()
+
+    key = jax.random.PRNGKey(0)
+    key, subkey = jax.random.split(key)
+
+    # Get best permutation and MST edges
+    perm = sampling.best_permutation(options, scores_array)
+    mst_edges = graph.kruskal(perm, domain)
+    order = graph.sampling_order(mst_edges)
+
+    # Sample from the tree
+    synth = sampling.sample_from_tree(margs, order, subkey, domain, n)
+
+    # Boosted entropies with configurable max_iters
+    cliques = list(combinations(domain.attributes, 2))
+    ys = [data.project(clique).datavector() for clique in cliques]
+    boosted = ent_md.public_support(synth, cliques, [1.0] * len(cliques), ys, max_iters=max_iters)
+
+    # Systematic sampling and integer dataset creation
+    integer_df = ent_md.systematic_sample(boosted.df, boosted.weights)
+    boosted_integer = Dataset(df=integer_df, domain=domain)
+
+    # End timing here - after all synthesis steps
+    elapsed_time = time.time() - start_time
+
+    # Calculate all errors in a single loop
+    n_margs = len(margs)
+    scale_factor = 1 / size_multiplier
+    avg_err_mst = 0
+    avg_err_boosted = 0
+    avg_err_integer = 0
+
+    for marg, true_value in margs.items():
+        # MST error with scaling
+        synth_marg_values = synth.project(marg).values
+        scaled_synth_values = synth_marg_values * scale_factor
+        mst_diff = scaled_synth_values - true_value.values
+        avg_err_mst += jnp.linalg.norm(mst_diff, 1) / (n_margs * total)
+
+        # Boosted error
+        boosted_diff = boosted.project(marg).values - true_value.values
+        avg_err_boosted += jnp.linalg.norm(boosted_diff, 1) / (n_margs * total)
+
+        # Integer error
+        integer_diff = boosted_integer.project(marg).values - true_value.values
+        avg_err_integer += jnp.linalg.norm(integer_diff, 1) / (n_margs * total)
+
+    # Write results to CSV
+    with open("mst_boost.csv", "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["size_multiplier", "max_iters", "mst_error", "boosted_error", "integer_error", "time_seconds"])
+        writer.writerow([size_multiplier, max_iters, float(avg_err_mst), float(avg_err_boosted), float(avg_err_integer), elapsed_time])
+
+    print("Results written to mst_boost.csv")
+    print(f"Size multiplier: {size_multiplier}")
+    print(f"Max iterations: {max_iters}")
+    print(f"MST error: {avg_err_mst}")
+    print(f"Boosted error: {avg_err_boosted}")
+    print(f"Integer error: {avg_err_integer}")
+    print(f"Elapsed time: {elapsed_time} seconds")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate and evaluate synthetic datasets using MST and boosting")
+    parser.add_argument(
+        "size_multiplier",
+        type=float,
+        help="Size of synthetic dataset as a multiple of the original dataset size (e.g., 0.25 for 25%)"
+    )
+    parser.add_argument(
+        "--max_iters",
+        type=int,
+        default=2000,
+        help="Maximum iterations for the public support function (default: 2000)"
+    )
+    args = parser.parse_args()
+    main(args.size_multiplier, args.max_iters)
