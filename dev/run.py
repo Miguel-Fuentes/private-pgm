@@ -4,6 +4,7 @@ import csv
 
 from mbi import Dataset
 import ent_md
+import max_ent
 from scoring import mutual_information
 import graph
 import sampling
@@ -12,7 +13,7 @@ import jax
 import jax.numpy as jnp
 
 
-def main(size_multiplier: float, max_iters: int):
+def main(size_multiplier: float, max_iters: int, lambda_reg: float):
     # Load data and domain
     data = Dataset.load("../data/adult.csv", "../data/adult-domain.json")
     domain = data.domain
@@ -49,7 +50,8 @@ def main(size_multiplier: float, max_iters: int):
     # Boosted entropies with configurable max_iters
     cliques = list(combinations(domain.attributes, 2))
     ys = [data.project(clique).datavector() for clique in cliques]
-    boosted = ent_md.public_support(synth, cliques, [1.0] * len(cliques), ys, max_iters=max_iters)
+    boosted = max_ent.public_support(synth, cliques, [1.0] * len(cliques), ys, 
+                                    max_iters=max_iters, lambda_reg=lambda_reg)
 
     # Systematic sampling and integer dataset creation
     integer_df = ent_md.systematic_sample(boosted.df, boosted.weights)
@@ -81,14 +83,15 @@ def main(size_multiplier: float, max_iters: int):
         avg_err_integer += jnp.linalg.norm(integer_diff, 1) / (n_margs * total)
 
     # Write results to CSV
-    with open("mst_boost.csv", "w", newline="") as csvfile:
+    with open("mst_boost.csv", "a", newline="") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(["size_multiplier", "max_iters", "mst_error", "boosted_error", "integer_error", "time_seconds"])
-        writer.writerow([size_multiplier, max_iters, float(avg_err_mst), float(avg_err_boosted), float(avg_err_integer), elapsed_time])
+        writer.writerow(["size_multiplier", "max_iters", "reg", "mst_error", "boosted_error", "integer_error", "time_seconds"])
+        writer.writerow([size_multiplier, max_iters, lambda_reg, float(avg_err_mst), float(avg_err_boosted), float(avg_err_integer), elapsed_time])
 
     print("Results written to mst_boost.csv")
     print(f"Size multiplier: {size_multiplier}")
     print(f"Max iterations: {max_iters}")
+    print(f"Lambda Reg: {max_iters}")
     print(f"MST error: {avg_err_mst}")
     print(f"Boosted error: {avg_err_boosted}")
     print(f"Integer error: {avg_err_integer}")
@@ -105,8 +108,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_iters",
         type=int,
-        default=2000,
+        default=5_000,
+        help="Maximum iterations for the public support function (default: 2000)"
+    )
+    parser.add_argument(
+        "--lambda_reg",
+        type=float,
+        default=1e-6,
         help="Maximum iterations for the public support function (default: 2000)"
     )
     args = parser.parse_args()
-    main(args.size_multiplier, args.max_iters)
+    main(args.size_multiplier, args.max_iters, args.lambda_reg)
