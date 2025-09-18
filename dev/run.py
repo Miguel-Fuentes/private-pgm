@@ -1,6 +1,7 @@
 import argparse
 import time
 import csv
+import os
 
 from mbi import Dataset
 import ent_md
@@ -47,11 +48,27 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
     # Sample from the tree
     synth = sampling.sample_from_tree(margs, order, subkey, domain, n)
 
-    # Boosted entropies with configurable max_iters
+    # --- CORRECTED LOGIC ---
+    # 1. Calculate MST error BEFORE removing duplicates
+    n_margs = len(margs)
+    scale_factor = 1 / size_multiplier
+    avg_err_mst = 0
+    for marg, true_value in margs.items():
+        synth_marg_values = synth.project(marg).values
+        scaled_synth_values = synth_marg_values * scale_factor
+        mst_diff = scaled_synth_values - true_value.values
+        avg_err_mst += jnp.linalg.norm(mst_diff, 1) / (n_margs * total)
+
+    # 2. Now, remove duplicate records from synth before boosting and count them
+    initial_synth_rows = synth.df.shape[0]
+    synth.df.drop_duplicates(inplace=True)
+    duplicates_removed = initial_synth_rows - synth.df.shape[0]
+
+    # 3. Boosted entropies using the de-duplicated dataset
     cliques = list(combinations(domain.attributes, 2))
     ys = [data.project(clique).datavector() for clique in cliques]
-    boosted = max_ent.public_support(synth, cliques, [1.0] * len(cliques), ys, 
-                                    max_iters=max_iters, lambda_reg=lambda_reg)
+    boosted = max_ent.public_support(synth, cliques, [1.0] * len(cliques), ys,
+                                     max_iters=max_iters, lambda_reg=lambda_reg)
 
     # Systematic sampling and integer dataset creation
     integer_df = ent_md.systematic_sample(boosted.df, boosted.weights)
@@ -60,20 +77,11 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
     # End timing here - after all synthesis steps
     elapsed_time = time.time() - start_time
 
-    # Calculate all errors in a single loop
-    n_margs = len(margs)
-    scale_factor = 1 / size_multiplier
-    avg_err_mst = 0
+    # 4. Calculate remaining errors (Boosted and Integer)
     avg_err_boosted = 0
     avg_err_integer = 0
 
     for marg, true_value in margs.items():
-        # MST error with scaling
-        synth_marg_values = synth.project(marg).values
-        scaled_synth_values = synth_marg_values * scale_factor
-        mst_diff = scaled_synth_values - true_value.values
-        avg_err_mst += jnp.linalg.norm(mst_diff, 1) / (n_margs * total)
-
         # Boosted error
         boosted_diff = boosted.project(marg).values - true_value.values
         avg_err_boosted += jnp.linalg.norm(boosted_diff, 1) / (n_margs * total)
@@ -82,16 +90,28 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
         integer_diff = boosted_integer.project(marg).values - true_value.values
         avg_err_integer += jnp.linalg.norm(integer_diff, 1) / (n_margs * total)
 
-    # Write results to CSV
-    with open("mst_boost.csv", "a", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["size_multiplier", "max_iters", "reg", "mst_error", "boosted_error", "integer_error", "time_seconds"])
-        writer.writerow([size_multiplier, max_iters, lambda_reg, float(avg_err_mst), float(avg_err_boosted), float(avg_err_integer), elapsed_time])
+    # --- Modified CSV Writing Logic ---
+    output_filename = "mst_boost.csv"
+    
+    # Check if the file exists before opening it
+    file_exists = os.path.exists(output_filename)
 
-    print("Results written to mst_boost.csv")
+    # Open the file in append mode. This will create it if it doesn't exist.
+    with open(output_filename, "a", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+
+        # If the file did not exist, write the header row with the new column
+        if not file_exists:
+            writer.writerow(["size_multiplier", "max_iters", "reg", "mst_error", "boosted_error", "integer_error", "time_seconds", "duplicates_removed"])
+        
+        # Always write the data row for the current job, including the new value
+        writer.writerow([size_multiplier, max_iters, lambda_reg, float(avg_err_mst), float(avg_err_boosted), float(avg_err_integer), elapsed_time, duplicates_removed])
+
+    print(f"Results written to {output_filename}")
     print(f"Size multiplier: {size_multiplier}")
     print(f"Max iterations: {max_iters}")
-    print(f"Lambda Reg: {max_iters}")
+    print(f"Lambda Reg: {lambda_reg}")
+    print(f"Duplicates Removed: {duplicates_removed}")
     print(f"MST error: {avg_err_mst}")
     print(f"Boosted error: {avg_err_boosted}")
     print(f"Integer error: {avg_err_integer}")
@@ -109,13 +129,14 @@ if __name__ == "__main__":
         "--max_iters",
         type=int,
         default=5_000,
-        help="Maximum iterations for the public support function (default: 2000)"
+        help="Maximum iterations for the public support function (default: 5000)"
     )
     parser.add_argument(
         "--lambda_reg",
         type=float,
         default=1e-6,
-        help="Maximum iterations for the public support function (default: 2000)"
+        help="Regularization parameter lambda for the public support function (default: 1e-6)"
     )
     args = parser.parse_args()
     main(args.size_multiplier, args.max_iters, args.lambda_reg)
+
