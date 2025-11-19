@@ -1,0 +1,26 @@
+# --- Core Science & Data ---
+numpy
+scipy
+pandas
+networkx
+matplotlib
+attrs
+
+# --- JAX & Machine Learning ---
+jax
+jaxlib
+chex
+optax
+equinox
+
+# --- Development & Testing Tools ---
+jupyterlab
+black
+flake8
+mypy
+pytest
+pytype
+parameterized
+
+# --- Local Project Install (Must be last) ---
+-e .
