@@ -8,3 +8,6 @@ build/
 pyproject.toml
 *.egg-info/
 *.ipynb
+*.png
+*.pdf
+*.csv
