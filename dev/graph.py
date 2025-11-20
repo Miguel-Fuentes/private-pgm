@@ -1,8 +1,4 @@
-from mbi import (
-    Domain
-)
-
-from collections import defaultdict, deque
+from mbi import Domain
 
 import jax
 import jax.numpy as jnp
@@ -42,6 +38,7 @@ def _edges_from_jax(jax_edges: Edges, domain) -> list[tuple[str]]:
 
 def _find_root(parents: Parents, i: int) -> tuple[int, Parents]:
     """Finds the root of a node and performs path compression."""
+
     def find_root_cond(state: tuple[int, Parents]) -> bool:
         """Loop condition: continue while the current node is not its own parent."""
         current_node, parents_arr = state
@@ -82,7 +79,6 @@ def _union(
     root_j, parents = _find_root(parents, j)
 
     def merge() -> tuple[Parents, Ranks, bool]:
-
         def rank_i_greater() -> tuple[Parents, Ranks]:
             return parents.at[root_j].set(root_i), ranks
 
@@ -96,7 +92,8 @@ def _union(
 
         new_parents, new_ranks = lax.switch(
             jnp.sign(ranks[root_i] - ranks[root_j]) - 1,
-            [rank_j_greater, ranks_equal, rank_i_greater])
+            [rank_j_greater, ranks_equal, rank_i_greater],
+        )
 
         return new_parents, new_ranks, True
 
@@ -182,40 +179,3 @@ def kruskal(edges: list[tuple[str]], domain: Domain) -> list[tuple[str]]:
 
     valid_edges = mst_jax_edges[mst_jax_edges[:, 0] != -1]
     return _edges_from_jax(valid_edges, domain)
-
-
-def sampling_order(edge_list: list[tuple[str]]) -> list[str]:
-    """
-    Determines a breadth-first search (BFS) sampling order from a list of edges.
-
-    Args:
-        edge_list: A list of (attribute1, attribute2) tuples representing the edges
-                   of a graph. The first edge's first attribute is used as the root
-                   for the BFS.
-
-    Returns:
-        A list of attribute names (strings) in BFS order, representing a valid
-        sampling order for a tree-structured graphical model.
-    """
-    adj_list = defaultdict(list)
-    for edge in edge_list:
-        u, v = edge
-        adj_list[u].append(v)
-        adj_list[v].append(u)
-
-    root = edge_list[0][0]
-    q = deque([root])
-    visited = {root}
-    sampling_order = [root]
-    parents = {}
-
-    while q:
-        u = q.popleft()
-        for v in adj_list[u]:
-            if v not in visited:
-                visited.add(v)
-                q.append(v)
-                parents[u] = v
-                sampling_order.append(v)
-
-    return sampling_order

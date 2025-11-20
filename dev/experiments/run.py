@@ -3,14 +3,12 @@ import time
 import csv
 import os
 
-from mbi import Dataset
-import ent_md
+from mbi import Dataset, LinearMeasurement, estimation
 import max_ent
 from scoring import mutual_information
 import graph
 import sampling
 from itertools import combinations
-import jax
 import jax.numpy as jnp
 
 
@@ -37,18 +35,19 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
     # Start timing here - beginning of the actual synthesis process
     start_time = time.time()
 
-    key = jax.random.PRNGKey(0)
-    key, subkey = jax.random.split(key)
-
     # Get best permutation and MST edges
     perm = sampling.best_permutation(options, scores_array)
     mst_edges = graph.kruskal(perm, domain)
-    order = graph.sampling_order(mst_edges)
 
-    # Sample from the tree
-    synth = sampling.sample_from_tree(margs, order, subkey, domain, n)
+    # Train PGM and sample
+    measurements = []
+    for edge in mst_edges:
+        x = margs[edge].datavector()
+        measurements.append(LinearMeasurement(x, edge, stddev=1.0))
 
-    # --- CORRECTED LOGIC ---
+    model = estimation.mirror_descent(domain, measurements)
+    synth = model.synthetic_data(rows=n)
+
     # 1. Calculate MST error BEFORE removing duplicates
     n_margs = len(margs)
     scale_factor = 1 / size_multiplier
@@ -67,11 +66,17 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
     # 3. Boosted entropies using the de-duplicated dataset
     cliques = list(combinations(domain.attributes, 2))
     ys = [data.project(clique).datavector() for clique in cliques]
-    boosted = max_ent.public_support(synth, cliques, [1.0] * len(cliques), ys,
-                                     max_iters=max_iters, lambda_reg=lambda_reg)
+    boosted = max_ent.public_support(
+        synth,
+        cliques,
+        [1.0] * len(cliques),
+        ys,
+        max_iters=max_iters,
+        lambda_reg=lambda_reg,
+    )
 
     # Systematic sampling and integer dataset creation
-    integer_df = ent_md.systematic_sample(boosted.df, boosted.weights)
+    integer_df = max_ent.systematic_sample(boosted.df, boosted.weights)
     boosted_integer = Dataset(df=integer_df, domain=domain)
 
     # End timing here - after all synthesis steps
@@ -92,7 +97,7 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
 
     # --- Modified CSV Writing Logic ---
     output_filename = "mst_boost.csv"
-    
+
     # Check if the file exists before opening it
     file_exists = os.path.exists(output_filename)
 
@@ -102,10 +107,32 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
 
         # If the file did not exist, write the header row with the new column
         if not file_exists:
-            writer.writerow(["size_multiplier", "max_iters", "reg", "mst_error", "boosted_error", "integer_error", "time_seconds", "duplicates_removed"])
-        
+            writer.writerow(
+                [
+                    "size_multiplier",
+                    "max_iters",
+                    "reg",
+                    "mst_error",
+                    "boosted_error",
+                    "integer_error",
+                    "time_seconds",
+                    "duplicates_removed",
+                ]
+            )
+
         # Always write the data row for the current job, including the new value
-        writer.writerow([size_multiplier, max_iters, lambda_reg, float(avg_err_mst), float(avg_err_boosted), float(avg_err_integer), elapsed_time, duplicates_removed])
+        writer.writerow(
+            [
+                size_multiplier,
+                max_iters,
+                lambda_reg,
+                float(avg_err_mst),
+                float(avg_err_boosted),
+                float(avg_err_integer),
+                elapsed_time,
+                duplicates_removed,
+            ]
+        )
 
     print(f"Results written to {output_filename}")
     print(f"Size multiplier: {size_multiplier}")
@@ -119,24 +146,25 @@ def main(size_multiplier: float, max_iters: int, lambda_reg: float):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate and evaluate synthetic datasets using MST and boosting")
+    parser = argparse.ArgumentParser(
+        description="Generate and evaluate synthetic datasets using MST and boosting"
+    )
     parser.add_argument(
         "size_multiplier",
         type=float,
-        help="Size of synthetic dataset as a multiple of the original dataset size (e.g., 0.25 for 25%)"
+        help="Size of synthetic dataset as a multiple of the original dataset size (e.g., 0.25 for 25%)",
     )
     parser.add_argument(
         "--max_iters",
         type=int,
         default=5_000,
-        help="Maximum iterations for the public support function (default: 5000)"
+        help="Maximum iterations for the public support function (default: 5000)",
     )
     parser.add_argument(
         "--lambda_reg",
         type=float,
         default=1e-6,
-        help="Regularization parameter lambda for the public support function (default: 1e-6)"
+        help="Regularization parameter lambda for the public support function (default: 1e-6)",
     )
     args = parser.parse_args()
     main(args.size_multiplier, args.max_iters, args.lambda_reg)
-

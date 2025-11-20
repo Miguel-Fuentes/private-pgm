@@ -2,6 +2,7 @@ from mbi import Dataset
 import numpy as np
 from scipy.optimize import minimize
 import time
+import pandas as pd
 from typing import List, Tuple
 
 
@@ -39,7 +40,7 @@ class SparseMatrix:
         # Pre-compute the index map for efficient matrix operations
         self._precompute_index_map(dataset.df, levels)
 
-    def _precompute_index_map(self, df: 'pd.DataFrame', levels: np.ndarray):
+    def _precompute_index_map(self, df: "pd.DataFrame", levels: np.ndarray):
         """
         Calculates a 1D array where each entry is the row index corresponding
         to a data record (column). This is the core of the sparse representation.
@@ -56,7 +57,7 @@ class SparseMatrix:
 
     def matvec(self, vector: np.ndarray) -> np.ndarray:
         """
-        Performs the matrix-vector product ($A \cdot v$), also known as "scatter-add".
+        Performs the matrix-vector product ($A cdot v$), also known as "scatter-add".
         It maps values from the vector (representing records) to the output
         array (representing marginal cells).
 
@@ -66,15 +67,16 @@ class SparseMatrix:
         Returns:
             The resulting numpy array of length equal to the number of marginal cells.
         """
-        assert vector.size == self.num_records, \
+        assert vector.size == self.num_records, (
             f"Input vector size {vector.size} must match matrix columns {self.num_records}"
+        )
         output = np.zeros(self.shape[0])
         np.add.at(output, self.index_map, vector)
         return output
 
     def rmatvec(self, vector: np.ndarray) -> np.ndarray:
         """
-        Performs the transpose-matrix-vector product ($A^T \cdot v$), known as "gather".
+        Performs the transpose-matrix-vector product ($A^T cdot v$), known as "gather".
         It gathers values from the vector (representing marginal cells) according
         to the record-to-cell mapping.
 
@@ -84,18 +86,26 @@ class SparseMatrix:
         Returns:
             The resulting numpy array of length equal to the number of records.
         """
-        assert vector.size == self.shape[0], \
+        assert vector.size == self.shape[0], (
             f"Input vector size {vector.size} must match matrix rows {self.shape[0]}"
+        )
         return vector[self.index_map]
 
     def __repr__(self) -> str:
         return f"<SparseMatrix shape={self.shape} clique={self.clique}>"
 
 
-def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
-                   variances: List[float], measurements: List[np.ndarray],
-                   lambda_reg: float = 1e-5, max_iters: int = 2000,
-                   tol: float = 1e-8, verbose: bool = True) -> Dataset:
+def public_support(
+    public_data: Dataset,
+    cliques: List[Tuple[str, ...]],
+    variances: List[float],
+    measurements: List[np.ndarray],
+    lambda_reg: float = 1e-5,
+    max_iters: int = 2000,
+    tol: float = 1e-8,
+    verbose: bool = True,
+    EPS=1e-15,
+) -> Dataset:
     """
     Finds weights for a public dataset that best match a set of noisy measurements,
     using entropy regularization for smoothness.
@@ -125,9 +135,13 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
     total = sum(np.sum(m) for m in measurements) / len(measurements)
     if total < 1e-9:
         if verbose:
-            print("Warning: Total of all measurements is near zero. Returning uniform weights.")
+            print(
+                "Warning: Total of all measurements is near zero. Returning uniform weights."
+            )
         uniform_weights = np.full(public_data.records, total / public_data.records)
-        return Dataset(df=public_data.df, domain=public_data.domain, weights=uniform_weights)
+        return Dataset(
+            df=public_data.df, domain=public_data.domain, weights=uniform_weights
+        )
 
     # Normalize measurements and variances
     norm_measurements = [m / total for m in measurements]
@@ -144,7 +158,9 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
 
     # Scale only least squares terms for numerical stability
     measurement_norms = [np.linalg.norm(m) for m in norm_measurements]
-    max_weighted_norm = max(w * norm for w, norm in zip(term_weights, measurement_norms))
+    max_weighted_norm = max(
+        w * norm for w, norm in zip(term_weights, measurement_norms)
+    )
 
     # Normalize least squares terms
     ls_scale = 1.0 / max(max_weighted_norm, 1e-10)
@@ -152,8 +168,6 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
     if verbose:
         print(f"Least squares scaling factor: {ls_scale:.2e}")
         print(f"Using lambda_reg value directly: {lambda_reg:.2e}")
-
-    EPS = 1e-15
 
     # Function to convert from log space to probability space (simplex)
     def log_to_prob(log_x):
@@ -178,7 +192,7 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
         # Entropy term in log space
         # For numerical stability, use the fact that x_prob is already normalized
         entropy = -np.sum(x_prob * np.log(np.maximum(x_prob, EPS)))
-        entropy_term = lambda_reg * entropy  # Note: sign flipped because entropy is negative
+        entropy_term = lambda_reg * entropy
 
         total_obj = ls_loss + entropy_term
         return total_obj
@@ -203,10 +217,6 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
         grad_prob += entropy_grad_prob
 
         # Transform gradient from probability space to log space using chain rule
-        # We need to compute ∂f/∂log_x = (∂f/∂x_prob) * (∂x_prob/∂log_x)
-        # The Jacobian ∂x_prob/∂log_x has a special structure due to the softmax
-
-        # More efficient way to compute this transformation:
         # For softmax parameterization, the gradient transformation is:
         # ∂f/∂log_x_i = x_prob_i * (∂f/∂x_prob_i - sum_j(x_prob_j * ∂f/∂x_prob_j))
         mean_grad_prob = np.sum(x_prob * grad_prob)
@@ -216,7 +226,7 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
 
     # Progress monitoring
     iterations = 0
-    best_obj = float('inf')
+    best_obj = float("inf")
     last_print_time = time.time()
     objective_history = []
 
@@ -236,11 +246,15 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
             last_print_time = current_time
             x_prob = log_to_prob(log_x)
             print(f"Iter {iterations}: obj={obj_val:.4e}")
-            print(f"  Probabilities - Min: {np.min(x_prob):.2e}, Max: {np.max(x_prob):.2e}, Sum: {np.sum(x_prob):.8f}")
+            print(
+                f"  Probabilities - Min: {np.min(x_prob):.2e}, Max: {np.max(x_prob):.2e}, Sum: {np.sum(x_prob):.8f}"
+            )
 
             # Check for convergence by looking at recent progress
             if len(objective_history) >= 3:
-                recent_progress = abs(objective_history[-3] - objective_history[-1]) / max(abs(objective_history[-3]), 1e-10)
+                recent_progress = abs(
+                    objective_history[-3] - objective_history[-1]
+                ) / max(abs(objective_history[-3]), 1e-10)
                 print(f"  Recent progress: {recent_progress:.2e}")
 
     # Initial point in log space (uniform distribution)
@@ -248,22 +262,24 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
 
     if verbose:
         print("Starting L-BFGS optimization in log space...")
-        print("This approach naturally enforces the simplex constraint through parameterization")
+        print(
+            "This approach naturally enforces the simplex constraint through parameterization"
+        )
 
     # Optimization in log space (unconstrained)
     result = minimize(
         objective_func,
         log_x0,
-        method='L-BFGS-B',  # Could use regular L-BFGS but L-BFGS-B handles bounds better if needed
+        method="L-BFGS",
         jac=gradient_func,
         callback=progress_callback,
         options={
-            'ftol': tol,
-            'gtol': tol * 10,  # Slightly larger gradient tolerance
-            'maxiter': max_iters,
-            'maxcor': min(20, n_variables*2),  # Memory parameter
-            'maxfun': max_iters * 2
-        }
+            "ftol": tol,
+            "gtol": tol * 10,  # Slightly larger gradient tolerance
+            "maxiter": max_iters,
+            "maxcor": min(20, n_variables * 2),  # Memory parameter
+            "maxfun": max_iters * 2,
+        },
     )
 
     # Convert final solution back to probability space
@@ -279,8 +295,66 @@ def public_support(public_data: Dataset, cliques: List[Tuple[str, ...]],
         print(f"Final objective: {best_obj:.6e}")
         print(f"Success: {result.success}")
         print(f"Message: {result.message}")
-        print(f"Final weight statistics - Min: {np.min(optimized_weights):.6e}, "
-              f"Max: {np.max(optimized_weights):.6e}, "
-              f"Sum: {np.sum(optimized_weights):.6f}")
+        print(
+            f"Final weight statistics - Min: {np.min(optimized_weights):.6e}, "
+            f"Max: {np.max(optimized_weights):.6e}, "
+            f"Sum: {np.sum(optimized_weights):.6f}"
+        )
 
-    return Dataset(df=public_data.df, domain=public_data.domain, weights=optimized_weights)
+    return Dataset(
+        df=public_data.df, domain=public_data.domain, weights=optimized_weights
+    )
+
+
+def systematic_sample(df, weights, random_state=None):
+    """
+    Transforms a weighted pandas DataFrame into an unweighted one using
+    systematic sampling.
+
+    This method is a low-variance, unbiased technique that creates a new
+    dataset whose size is equal to the rounded sum of the original weights.
+    An item with weight `w` is guaranteed to be selected either floor(w) or
+    ceil(w) times.
+
+    Args:
+        df (pd.DataFrame): The input DataFrame.
+        weights (np.ndarray or pd.Series): A NumPy array or pandas Series
+                                           containing the non-negative float
+                                           weights. Its length cannot be
+                                           greater than the number of rows
+                                           in df.
+        random_state (int, optional): Seed for the random number generator
+                                      to ensure reproducibility. Defaults to None.
+
+    Returns:
+        pd.DataFrame: A new, unweighted DataFrame where rows have been
+                      repeated according to the systematic sampling procedure.
+    """
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("df must be a pandas DataFrame.")
+    if len(weights) > len(df):
+        raise ValueError(
+            "Length of weights vector cannot be greater than the number of rows in df."
+        )
+    if (np.array(weights) < 0).any():
+        raise ValueError("Weights cannot be negative.")
+
+    sum_of_weights = np.sum(weights)
+    target_size = int(round(sum_of_weights))
+
+    if target_size == 0:
+        return df.iloc[[]].reset_index(drop=True)
+
+    rng = np.random.RandomState(random_state)
+
+    step = sum_of_weights / target_size
+    start_point = rng.uniform(low=0.0, high=step)
+    pointers = start_point + np.arange(target_size) * step
+
+    cumulative_weights = np.cumsum(weights)
+
+    # Use binary search to efficiently find which interval each pointer falls into
+    selected_indices = np.searchsorted(cumulative_weights, pointers)
+
+    unweighted_df = df.iloc[selected_indices]
+    return unweighted_df.reset_index(drop=True)
