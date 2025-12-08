@@ -26,6 +26,7 @@ dependencies = [
     "jaxlib",
     "chex",
     "optax",
+    "equinox"
 ]
 
 [project.urls]
